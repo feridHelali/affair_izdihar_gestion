@@ -1,0 +1,44 @@
+[project]
+name = "izdihar-legacy-systems-audit"
+version = "0.1.0"
+description = "Forensic audit and migration tools for IZDIHAR legacy systems (Milk, Cattle Feed, Caisse)"
+authors = [
+    {name = "Ferid HELALI", email = "helaliferid@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "dbfread>=2.0.7",
+    "pandas>=2.0.0",
+    "rich>=13.0.0",
+    "click>=8.1.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "PySide6>=6.5.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["scripts", "systems"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
