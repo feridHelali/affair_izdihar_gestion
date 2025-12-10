@@ -1,197 +1,86 @@
 #!/usr/bin/env python3
 """
-High-Fidelity PDF to Markdown Converter using Marker
-Handles tables, images, equations, and complex layouts
+Clean marker-pdf converter – works perfectly with uv
 """
 
-import os
 import sys
 from pathlib import Path
 
-def install_marker():
-    """Install marker-pdf if not already installed"""
-    try:
-        from marker.converters.pdf import PdfConverter
-        print("✓ Marker already installed")
-        return True
-    except ImportError:
-        print("Installing marker-pdf... (this may take a minute)")
-        os.system(f"{sys.executable} -m pip install marker-pdf --quiet")
-        try:
-            from marker.converters.pdf import PdfConverter
-            print("✓ Marker installed successfully")
-            return True
-        except ImportError:
-            print("❌ Failed to import marker. Trying alternative installation...")
-            os.system(f"{sys.executable} -m pip install 'marker-pdf[all]' --quiet")
-            return False
+try:
+    from marker.convert import convert_single_pdf
+    from marker.models import load_all_models
+except ImportError:
+    print("\nmarker-pdf is not installed!")
+    print("Run:  uv pip install marker-pdf[all]\n")
+    sys.exit(1)
 
-def convert_pdf_to_markdown(pdf_path, output_dir=None):
-    """
-    Convert a PDF file to Markdown with high fidelity
-    
-    Args:
-        pdf_path: Path to the PDF file
-        output_dir: Optional output directory (defaults to same as PDF)
-    
-    Returns:
-        Path to the generated markdown file
-    """
-    from marker.converters.pdf import PdfConverter
-    from marker.models import create_model_dict
-    from marker.output import text_from_rendered
-    
+from pypdf import PdfReader
+
+
+def convert(pdf_path: str, output_dir: str = None, chunk_size: int = 10):
     pdf_path = Path(pdf_path)
-    
     if not pdf_path.exists():
-        raise FileNotFoundError(f"PDF not found: {pdf_path}")
-    
-    # Set output directory
-    if output_dir is None:
-        output_dir = pdf_path.parent
-    else:
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"\n📄 Converting: {pdf_path.name}")
-    print("⏳ Loading AI models (first run takes longer)...")
-    
-    # Initialize converter with models
-    converter = PdfConverter(artifact_dict=create_model_dict())
-    
-    print("🔄 Processing PDF...")
-    
-    # Convert PDF
-    rendered = converter(str(pdf_path))
-    
-    # Extract text/markdown
-    markdown_text, _, images = text_from_rendered(rendered)
-    
-    # Save markdown file
-    md_filename = pdf_path.stem + ".md"
-    md_path = output_dir / md_filename
-    
-    with open(md_path, 'w', encoding='utf-8') as f:
-        f.write(markdown_text)
-    
-    # Save images if any
+        print(f"File not found: {pdf_path}")
+        return
+
+    out_dir = Path(output_dir) if output_dir else pdf_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\nConverting: {pdf_path.name}")
+    print("Loading models (first run = 1–3 min)...")
+    models = load_all_models()
+
+    reader = PdfReader(pdf_path)
+    total = len(reader.pages)
+    print(f"{total} pages → chunk size = {chunk_size}")
+
+    full_md = ""
+    images = {}
+    counter = 0
+
+    for start in range(0, total, chunk_size):
+        pages_to_do = min(chunk_size, total - start)
+        print(f"   → pages {start+1}–{start+pages_to_do}")
+
+        md, _, imgs = convert_single_pdf(
+            str(pdf_path), models,
+            start_page=start, max_pages=pages_to_do,
+            batch_multiplier=4  # helps with memory
+        )
+
+        # rename images to avoid conflicts
+        for old, data in imgs.items():
+            new = f"img_{counter:04d}_{old}"
+            md = md.replace(f"]({old})", f"]({new})")
+            images[new] = data
+            counter += 1
+
+        full_md += md + "\n\n---\n\n"
+
+    # save markdown
+    md_file = out_dir / f"{pdf_path.stem}.md"
+    md_file.write_text(full_md, encoding="utf-8")
+
+    # save images
     if images:
-        img_dir = output_dir / f"{pdf_path.stem}_images"
+        img_dir = out_dir / f"{pdf_path.stem}_images"
         img_dir.mkdir(exist_ok=True)
-        
-        saved_count = 0
-        for img_name, img_data in images.items():
-            try:
-                img_path = img_dir / img_name
-                # Handle both PIL images and bytes
-                if hasattr(img_data, 'save'):
-                    img_data.save(img_path)
-                else:
-                    with open(img_path, 'wb') as f:
-                        f.write(img_data)
-                saved_count += 1
-            except Exception as e:
-                print(f"⚠️  Could not save image {img_name}: {e}")
-        
-        if saved_count > 0:
-            print(f"🖼️  Saved {saved_count} images to: {img_dir}")
-    
-    print(f"✅ Conversion complete!")
-    print(f"📝 Markdown saved to: {md_path}")
-    
-    return md_path
+        for name, data in images.items():
+            path = img_dir / name
+            if hasattr(data, "save"):
+                data.save(path)
+            else:
+                path.write_bytes(data)
+        print(f"Saved {len(images)} images → {img_dir}")
 
-def batch_convert(input_dir, output_dir=None):
-    """
-    Convert all PDFs in a directory
-    
-    Args:
-        input_dir: Directory containing PDF files
-        output_dir: Optional output directory
-    """
-    input_dir = Path(input_dir)
-    pdf_files = list(input_dir.glob("*.pdf")) + list(input_dir.glob("*.PDF"))
-    
-    if not pdf_files:
-        print(f"No PDF files found in {input_dir}")
-        return
-    
-    print(f"\n📚 Found {len(pdf_files)} PDF file(s)")
-    
-    success_count = 0
-    error_count = 0
-    
-    for i, pdf_path in enumerate(pdf_files, 1):
-        print(f"\n{'='*60}")
-        print(f"Processing {i}/{len(pdf_files)}")
-        try:
-            convert_pdf_to_markdown(pdf_path, output_dir)
-            success_count += 1
-        except Exception as e:
-            print(f"❌ Error converting {pdf_path.name}: {e}")
-            error_count += 1
-            continue
-    
-    print(f"\n{'='*60}")
-    print(f"🏁 Batch conversion complete!")
-    print(f"✅ Successful: {success_count}")
-    print(f"❌ Failed: {error_count}")
+    print(f"\nSUCCESS → {md_file}")
 
-def main():
-    """Main function with CLI interface"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(
-        description="Convert PDF files to Markdown with high fidelity using Marker"
-    )
-    parser.add_argument(
-        "input",
-        help="Path to PDF file or directory containing PDFs"
-    )
-    parser.add_argument(
-        "-o", "--output",
-        help="Output directory (default: same as input)",
-        default=None
-    )
-    parser.add_argument(
-        "--install",
-        action="store_true",
-        help="Install marker-pdf and exit"
-    )
-    
-    args = parser.parse_args()
-    
-    # Install if requested
-    if args.install:
-        install_marker()
-        return
-    
-    # Ensure marker is installed
-    if not install_marker():
-        print("\n❌ Could not verify marker installation.")
-        print("Try manually: pip install marker-pdf")
-        sys.exit(1)
-    
-    input_path = Path(args.input)
-    
-    # Check if input is file or directory
-    if input_path.is_file():
-        convert_pdf_to_markdown(input_path, args.output)
-    elif input_path.is_dir():
-        batch_convert(input_path, args.output)
-    else:
-        print(f"❌ Invalid input: {input_path}")
-        sys.exit(1)
 
 if __name__ == "__main__":
-    # Simple usage examples
-    if len(sys.argv) == 1:
-        print("\n🚀 PDF to Markdown Converter (Marker)\n")
-        print("Usage:")
-        print("  python script.py document.pdf              # Convert single PDF")
-        print("  python script.py /path/to/pdfs/            # Convert all PDFs in folder")
-        print("  python script.py document.pdf -o output/   # Specify output directory")
-        print("  python script.py --install                 # Install dependencies\n")
-        sys.exit(0)
-    
-    main()
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("input")
+    p.add_argument("-o", "--output", default=None)
+    p.add_argument("--chunk-size", type=int, default=10)
+    args = p.parse_args()
+    convert(args.input, args.output, args.chunk_size)
