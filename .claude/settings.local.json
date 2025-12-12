@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(xxd:*)",
+      "Bash(du -sh:*)",
+      "Bash(for dir in \"D:\\40_Cooperative_IZDIHAR_Lazhar_LATTAOUI\\Sauvegarde_Disque_HP_Gestion_F\"/*/)",
+      "Bash(done)"
+    ]
+  }
+}
